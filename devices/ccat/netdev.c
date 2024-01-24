@@ -24,7 +24,7 @@
 #include <linux/netdevice.h>
 #include <linux/version.h>
 
-#ifdef CONFIG_PCI
+#ifdef CONFIG_GENERIC_ISA_DMA
 #include <asm/dma.h>
 #else
 #define free_dma(X)
@@ -894,8 +894,18 @@ static int ccat_eth_init_netdev(struct ccat_eth_priv *priv)
 	int status;
 
 	/* init netdev with MAC and stack callbacks */
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+	u8 mac_addr[ETH_ALEN];
+
+	if (priv->netdev->addr_len != ETH_ALEN)
+		return -EFAULT;
+	memcpy_fromio(mac_addr, priv->reg.mii + 8, ETH_ALEN);
+	eth_hw_addr_set(priv->netdev, mac_addr);
+#else
 	memcpy_fromio(priv->netdev->dev_addr, priv->reg.mii + 8,
 		      priv->netdev->addr_len);
+#endif
 	priv->netdev->netdev_ops = &ccat_eth_netdev_ops;
 
 	/* use as EtherCAT device? */

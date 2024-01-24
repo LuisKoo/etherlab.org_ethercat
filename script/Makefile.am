@@ -4,9 +4,7 @@
 #
 #  IgH EtherCAT master
 #
-#  $Id$
-#
-#  Copyright (C) 2006-2008  Florian Pose, Ingenieurgemeinschaft IgH
+#  Copyright (C) 2006-2022  Florian Pose, Ingenieurgemeinschaft IgH
 #
 #  This file is part of the IgH EtherCAT Master.
 #
@@ -37,13 +35,45 @@ sbin_SCRIPTS = ethercatctl
 
 dist_sysconf_DATA = ethercat.conf
 
-EXTRA_DIST = \
+script_templates = \
 	ethercatctl.in \
-	ethercat.service.in \
+	ethercat.service.in
+
+EXTRA_DIST = \
+	$(script_templates) \
+	ethercat.bash_completion \
 	ifup-eoe.sh
+
+CLEANFILES = \
+	ethercatctl \
+	ethercat.service
 
 if HAVE_SYSTEMD
 systemdsystemunit_DATA = ethercat.service
 endif
+
+completionsdir = $(datadir)/bash-completion/completions
+completions_DATA = ethercat.bash_completion
+
+install-data-hook:
+	cd $(DESTDIR)$(completionsdir); \
+    mv ethercat.bash_completion ethercat
+
+uninstall-hook:
+	cd $(DESTDIR)$(completionsdir); \
+    rm ethercat
+
+# Any precious variable used inside script_templates should appear here
+expand_script = $(SED) \
+	-e 's,[@]VERSION[@],$(VERSION),g' \
+	-e 's,[@]bindir[@],$(bindir),g' \
+	-e 's,[@]sbindir[@],$(sbindir),g' \
+	-e 's,[@]sysconfdir[@],$(sysconfdir),g'
+
+ethercatctl: $(srcdir)/ethercatctl.in Makefile
+	$(expand_script) < $< > $@
+
+ethercat.service: $(srcdir)/ethercat.service.in Makefile
+	$(expand_script) < $< > $@
 
 #------------------------------------------------------------------------------

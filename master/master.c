@@ -42,6 +42,7 @@
 #include <linux/device.h>
 #include <linux/version.h>
 #include <linux/hrtimer.h>
+#include <linux/kthread.h>
 
 #include "globals.h"
 #include "slave.h"
@@ -68,6 +69,9 @@
 /** Always output corrupted frames.
  */
 #define FORCE_OUTPUT_CORRUPTED 0
+
+/** SDO injection timeout in microseconds. */
+#define EC_SDO_INJECTION_TIMEOUT 10000
 
 #ifdef EC_HAVE_CYCLES
 
@@ -141,7 +145,8 @@ int ec_master_init(ec_master_t *master, /**< EtherCAT master */
         const uint8_t *backup_mac, /**< MAC address of backup device */
         dev_t device_number, /**< Character device number. */
         struct class *class, /**< Device class. */
-        unsigned int debug_level /**< Debug level (module parameter). */
+        unsigned int debug_level, /**< Debug level (module parameter). */
+        unsigned int run_on_cpu /**< bind created kernel threads to a cpu */
         )
 {
     int ret;
@@ -219,6 +224,7 @@ int ec_master_init(ec_master_t *master, /**< EtherCAT master */
     master->fsm_exec_count = 0U;
 
     master->debug_level = debug_level;
+    master->run_on_cpu = run_on_cpu;
     master->stats.timeouts = 0;
     master->stats.corrupted = 0;
     master->stats.unmatched = 0;
@@ -578,7 +584,7 @@ int ec_master_thread_start(
         )
 {
     EC_MASTER_INFO(master, "Starting %s thread.\n", name);
-    master->thread = kthread_run(thread_func, master, name);
+    master->thread = kthread_create(thread_func, master, name);
     if (IS_ERR(master->thread)) {
         int err = (int) PTR_ERR(master->thread);
         EC_MASTER_ERR(master, "Failed to start master thread (error %i)!\n",
@@ -586,6 +592,12 @@ int ec_master_thread_start(
         master->thread = NULL;
         return err;
     }
+    if (0xffffffff != master->run_on_cpu) {
+        EC_MASTER_INFO(master, " binding thread to cpu %u\n",master->run_on_cpu);
+        kthread_bind(master->thread,master->run_on_cpu);
+    }
+    /* Ignoring return value of wake_up_process */
+    (void) wake_up_process(master->thread);
 
     return 0;
 }
@@ -1447,29 +1459,18 @@ void ec_master_nanosleep(const unsigned long nsecs)
 
 /*****************************************************************************/
 
-/* compatibility for priority changes */
-static inline void set_normal_priority(struct task_struct *p, int nice)
-{
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
-    sched_set_normal(p, nice);
-#else
-    struct sched_param param = { .sched_priority = 0 };
-    sched_setscheduler(p, SCHED_NORMAL, &param);
-    set_user_nice(p, nice);
-#endif
-}
-
-/*****************************************************************************/
-
 /** Execute slave FSMs.
+ *
+ * Returns non-zero, if at least one slave FSM is busy.
  */
-void ec_master_exec_slave_fsms(
+int ec_master_exec_slave_fsms(
         ec_master_t *master /**< EtherCAT master. */
         )
 {
     ec_datagram_t *datagram;
     ec_fsm_slave_t *fsm, *next;
     unsigned int count = 0;
+    int busy = 0;
 
     list_for_each_entry_safe(fsm, next, &master->fsm_exec_list, list) {
         if (!fsm->datagram) {
@@ -1477,7 +1478,7 @@ void ec_master_exec_slave_fsms(
                     "This is a bug!\n", fsm->slave->ring_position);
             list_del_init(&fsm->list);
             master->fsm_exec_count--;
-            return;
+            return 1;
         }
 
         if (fsm->datagram->state == EC_DATAGRAM_INIT ||
@@ -1485,7 +1486,7 @@ void ec_master_exec_slave_fsms(
                 fsm->datagram->state == EC_DATAGRAM_SENT) {
             // previous datagram was not sent or received yet.
             // wait until next thread execution
-            return;
+            return 1;
         }
 
         datagram = ec_master_get_external_datagram(master);
@@ -1508,6 +1509,7 @@ void ec_master_exec_slave_fsms(
 #endif
             master->ext_ring_idx_fsm =
                 (master->ext_ring_idx_fsm + 1) % EC_EXT_RING_SIZE;
+            busy = 1;
         }
         else {
             // FSM finished
@@ -1532,6 +1534,7 @@ void ec_master_exec_slave_fsms(
                 list_add_tail(&master->fsm_slave->fsm.list,
                         &master->fsm_exec_list);
                 master->fsm_exec_count++;
+                busy = 1;
 #if DEBUG_INJECT
                 EC_MASTER_DBG(master, 1, "New slave %u FSM"
                         " consumed datagram %s, now %u FSMs in list.\n",
@@ -1547,6 +1550,8 @@ void ec_master_exec_slave_fsms(
         }
         count++;
     }
+
+    return busy;
 }
 
 /*****************************************************************************/
@@ -1556,7 +1561,7 @@ void ec_master_exec_slave_fsms(
 static int ec_master_idle_thread(void *priv_data)
 {
     ec_master_t *master = (ec_master_t *) priv_data;
-    int fsm_exec;
+    int fsm_exec, slave_fsms_busy;
 #ifdef EC_USE_HRTIMER
     size_t sent_bytes;
 #endif
@@ -1583,7 +1588,7 @@ static int ec_master_idle_thread(void *priv_data)
 
         fsm_exec = ec_fsm_master_exec(&master->fsm);
 
-        ec_master_exec_slave_fsms(master);
+        slave_fsms_busy = ec_master_exec_slave_fsms(master);
 
         up(&master->master_sem);
 
@@ -1599,7 +1604,7 @@ static int ec_master_idle_thread(void *priv_data)
 #endif
         up(&master->io_sem);
 
-        if (ec_fsm_master_idle(&master->fsm)) {
+        if (ec_fsm_master_idle(&master->fsm) && !slave_fsms_busy) {
 #ifdef EC_USE_HRTIMER
             ec_master_nanosleep(master->send_interval * 1000);
 #else
@@ -1627,6 +1632,7 @@ static int ec_master_idle_thread(void *priv_data)
 static int ec_master_operation_thread(void *priv_data)
 {
     ec_master_t *master = (ec_master_t *) priv_data;
+    int slave_fsms_busy;
 
     EC_MASTER_DBG(master, 1, "Operation thread running"
             " with fsm interval = %u us, max data size=%zu\n",
@@ -1634,6 +1640,8 @@ static int ec_master_operation_thread(void *priv_data)
 
     while (!kthread_should_stop()) {
         ec_datagram_output_stats(&master->fsm_datagram);
+
+        slave_fsms_busy = 0;
 
         if (master->injection_seq_rt == master->injection_seq_fsm) {
             // output statistics
@@ -1650,7 +1658,7 @@ static int ec_master_operation_thread(void *priv_data)
                 master->injection_seq_fsm++;
             }
 
-            ec_master_exec_slave_fsms(master);
+            slave_fsms_busy = ec_master_exec_slave_fsms(master);
 
             up(&master->master_sem);
         }
@@ -1659,7 +1667,7 @@ static int ec_master_operation_thread(void *priv_data)
         // the op thread should not work faster than the sending RT thread
         ec_master_nanosleep(master->send_interval * 1000);
 #else
-        if (ec_fsm_master_idle(&master->fsm)) {
+        if (ec_fsm_master_idle(&master->fsm) && !slave_fsms_busy) {
             set_current_state(TASK_INTERRUPTIBLE);
             schedule_timeout(1);
         }
@@ -1676,6 +1684,21 @@ static int ec_master_operation_thread(void *priv_data)
 /*****************************************************************************/
 
 #ifdef EC_EOE
+
+/* compatibility for priority changes */
+static inline void set_normal_priority(struct task_struct *p, int nice)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
+    sched_set_normal(p, nice);
+#else
+    struct sched_param param = { .sched_priority = 0 };
+    sched_setscheduler(p, SCHED_NORMAL, &param);
+    set_user_nice(p, nice);
+#endif
+}
+
+/*****************************************************************************/
+
 /** Starts Ethernet over EtherCAT processing on demand.
  */
 void ec_master_eoe_start(ec_master_t *master /**< EtherCAT master */)
@@ -1785,6 +1808,7 @@ schedule:
     EC_MASTER_DBG(master, 1, "EoE thread exiting...\n");
     return 0;
 }
+
 #endif
 
 /*****************************************************************************/
