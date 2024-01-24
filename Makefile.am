@@ -1,8 +1,6 @@
-#------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------
 #
-#  $Id$
-#
-#  Copyright (C) 2006-2008  Florian Pose, Ingenieurgemeinschaft IgH
+#  Copyright (C) 2006-2023  Florian Pose, Ingenieurgemeinschaft IgH
 #
 #  This file is part of the IgH EtherCAT Master.
 #
@@ -25,7 +23,8 @@
 #  EtherCAT technology and brand is only permitted in compliance with the
 #  industrial property and similar rights of Beckhoff Automation GmbH.
 #
-#------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------
+
 include $(top_srcdir)/Makefile.kbuild
 
 ACLOCAL_AMFLAGS = -I m4
@@ -59,13 +58,15 @@ if ENABLE_TTY
 SUBDIRS += tty
 endif
 
-
 noinst_HEADERS = \
 	globals.h
 
 EXTRA_DIST = \
-	FEATURES \
+	CodingStyle.md \
+	FEATURES.md \
+	INSTALL.md \
 	README.EoE \
+	README.md \
 	ethercat.spec
 
 mydist:
@@ -99,10 +100,16 @@ mrproper: clean cleandoc
 		libtool \
 		stamp-h1
 
-doc:
+generated_table.md: devices/create_driver_table.py
+	python3 $< --markdown $@ $(abs_srcdir)/devices
+
+device_drivers.md: $(srcdir)/devices/device_drivers_template.md generated_table.md
+	cat $^ > $@
+
+doc: device_drivers.md
 	doxygen Doxyfile
 
 cleandoc:
-	@rm -rf doxygen-output
+	@rm -rf doxygen-output generated_table.md device_drivers.md
 
-#------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------

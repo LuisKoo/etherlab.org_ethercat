@@ -2899,11 +2899,6 @@ int ecrt_master_sdo_download(ec_master_t *master, uint16_t slave_position,
             __func__, master, slave_position, index, subindex,
             data, data_size, abort_code);
 
-    if (!data_size) {
-        EC_MASTER_ERR(master, "Zero data size!\n");
-        return -EINVAL;
-    }
-
     ec_sdo_request_init(&request);
     ecrt_sdo_request_index(&request, index, subindex);
     ret = ec_sdo_request_alloc(&request, data_size);
@@ -2982,11 +2977,6 @@ int ecrt_master_sdo_download_complete(ec_master_t *master,
             " data = 0x%p, data_size = %zu, abort_code = 0x%p)\n",
             __func__, master, slave_position, index, data, data_size,
             abort_code);
-
-    if (!data_size) {
-        EC_MASTER_ERR(master, "Zero data size!\n");
-        return -EINVAL;
-    }
 
     ec_sdo_request_init(&request);
     ecrt_sdo_request_index(&request, index, 0);

@@ -2,9 +2,7 @@
 %
 %  IgH EtherCAT Master Documentation (French version)
 %
-%  $Id$
-%
-%  vi: spell spelllang=en tw=78
+%  vi: spell spelllang=fr tw=78
 %
 %------------------------------------------------------------------------------
 
@@ -17,7 +15,6 @@
 \usepackage{makeidx}
 \usepackage[refpage]{nomencl}
 \usepackage{listings}
-\usepackage[nofancy]{rcsinfo}
 \usepackage{SIunits}
 \usepackage{amsmath} % for \text{}
 \usepackage{longtable}
@@ -59,7 +56,7 @@
 \newcommand{\IgH}{\raisebox{-0.7667ex}
   {\includegraphics[height=2.2ex]{images/ighsign}}}
 
-\rcsInfo $RCSId$
+\input{git}
 
 \newcommand{\masterversion}{1.5.2}
 \newcommand{\linenum}[1]{\normalfont\textcircled{\tiny #1}}
@@ -68,8 +65,8 @@
 \makenomenclature
 
 % Revision and date on inner footer
-\ifoot[\scriptsize\rcsInfoRevision, \rcsInfoDate]
-    {\scriptsize\rcsInfoRevision, \rcsInfoDate}
+\ifoot[\scriptsize\gitversion, \today]
+    {\scriptsize\gitversion, \today}
 
 %------------------------------------------------------------------------------
 
@@ -93,8 +90,8 @@
     \url{fp@igh.de}\\[1ex] Ingenieurgemeinschaft \IgH}
 
     \vspace{\fill}
-    {\Large Essen, \rcsInfoLongDate\\[1ex]
-      R\'evision \rcsInfoRevision}
+    {\Large Essen, \today\\[1ex]
+      R\'evision \gitversion}
 
     \vspace{\fill} {\Large Traduit en fran\c{c}ais par S\'ebastien BLANCHET }
 

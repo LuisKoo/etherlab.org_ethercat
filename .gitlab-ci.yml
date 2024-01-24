@@ -1,6 +1,12 @@
 image:
     registry.gitlab.com/etherlab.org/build-container-factory/leap-15.3:linux-syms
 
+stages:
+    - build
+    - test
+    - doc
+    - deploy
+
 build:
     stage: build
 
@@ -13,8 +19,6 @@ build:
 # Build ethercat tool subcommand help output for documentation
 commands:
     stage: build
-    rules:
-        - if: $CI_COMMIT_BRANCH == "stable-1.5"
     script:
         - ./bootstrap
         - ./configure --disable-kernel --disable-userlib
@@ -41,34 +45,46 @@ test cmake:
         - make
         - ldd userexample
 
-pages:
-    stage: deploy
-    rules:
-        - if: $CI_COMMIT_BRANCH == "stable-1.5"
+# This job is collected by the EtherLab Documentation project.
+# It must be named 'doxygen' and must produce an artifact with a 'html'
+# directory directly containing the doxygen index HTML.
+doxygen:
+    stage: doc
+    variables:
+        GIT_SUBMODULE_STRATEGY: recursive
     script:
         - ./bootstrap
         - ./configure --with-linux-dir=/usr/src/linux-obj/$(uname -i)/default --disable-8139too --enable-tty --with-devices=2 --enable-ccat
-        - doxygen
-        - mkdir public
-        - echo "/ethercat /ethercat/v1 301" > public/_redirects
-        - mv doxygen-output/html/ public/v1/
+        - make doc
+        - mv doxygen-output/html/ html/
     artifacts:
         paths:
-            - public/
+            - html/
 
-documentation:
-    stage: deploy
-    rules:
-        - if: $CI_COMMIT_BRANCH == "stable-1.5"
+# This job is collected by the EtherLab Documentation project.
+# It must be named 'pdf' and must produce a 'pdf' directory as an artifact.
+# All PDF files in this directory will be collected.
+pdf:
+    stage: doc
     image: registry.gitlab.com/etherlab.org/build-container-factory/leap-15.3:texlive
     script:
         - cd documentation
+        - git show -s --format="\def\revision{%h}\def\gitversion{%(describe)}\def\gitauthor{%an}\def\isodate#1-#2-#3x{\day=#3 \month=#2 \year=#1}\isodate %csx" HEAD > git.tex
         - make
         - make index
         - make
+        - mkdir ../pdf
+        - mv *.pdf ../pdf
     artifacts:
         paths:
-            - documentation/*.pdf
+            - pdf/
+
+# Trigger EtherLab Documentation project to update https://docs.etherlab.org
+update docs server:
+    stage: deploy
+    rules:
+        - if: $CI_COMMIT_BRANCH == "stable-1.5" && $CI_PROJECT_NAMESPACE == "etherlab.org"
+    trigger: etherlab.org/docs
 
 # from 'Workflows/MergeRequest-Pipelines.gitlab-ci.yml', but on all branches
 workflow:
